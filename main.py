@@ -18,12 +18,14 @@ T = TypeVar("T")
 R = TypeVar("R")
 
 
+# define Result protocol w/ common composition methods
 class Result(Protocol[T]):
     def then(self, next: Callable[[Callable[[], T]], R]) -> "Result[R]": ...
 
     def also(self, cm: contextlib.AbstractContextManager) -> "Result[T]": ...
 
 
+# Immediate Result - for composing non-async functions
 class Immediate(Result[T]):
     __slots__ = "_func"
 
@@ -45,6 +47,7 @@ class Immediate(Result[T]):
         return self._func()
 
 
+# Pending Result - for composing async functions
 class Pending(Result[T]):
     __slots__ = "_func"
 
@@ -83,6 +86,7 @@ class Pending(Result[T]):
         return await self._func()
 
 
+# Helper function to create an Immediate or Pending Result, depending on if func is a coroutine function or not
 def make_result(func: Callable[[], Union[T, Coroutine[Any, Any, T]]]) -> Result[T]:
     return (
         Pending(cast(Callable[[], Coroutine[Any, Any, T]], func))
@@ -91,15 +95,18 @@ def make_result(func: Callable[[], Union[T, Coroutine[Any, Any, T]]]) -> Result[
     )
 
 
+# sample sync function
 def get_answer():
     return "42"
 
 
+# sample async function
 async def get_question():
     await asyncio.sleep(0.1)
     return "What is 6 * 9?"
 
 
+# sample IO function to compose w/ sync or async function
 def print_result(func: Callable[[], str]) -> str:
     try:
         result = func()
@@ -110,6 +117,7 @@ def print_result(func: Callable[[], str]) -> str:
         raise
 
 
+# sample context manager to compose w/ sync or async function
 class PrintContextManager(contextlib.AbstractContextManager):
     def __init__(self, value: str):
         self._value = value
@@ -128,6 +136,7 @@ class PrintContextManager(contextlib.AbstractContextManager):
         return super().__exit__(exc_type, exc_value, traceback)
 
 
+# helper function to run a result depending on its type (Immediate vs Pending)
 def run_result(result: Result[T]):
     if isinstance(result, Immediate):
         cast(Immediate, result)()
@@ -135,10 +144,12 @@ def run_result(result: Result[T]):
         asyncio.run(cast(Pending, result)())
 
 
+# compose a sample chain of calls, starting with a sync method
 s = make_result(get_answer).then(print_result).also(PrintContextManager("answer"))
 run_result(s)
 
-print()
 
+# compose a sample chain of calls, starting with an async method
+print()
 a = make_result(get_question).then(print_result).also(PrintContextManager("question"))
 run_result(a)
