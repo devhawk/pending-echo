@@ -1,14 +1,30 @@
 import asyncio
 import contextlib
-import functools
+import inspect
 from types import TracebackType
-from typing import Any, Callable, Coroutine, Optional, Type, TypeVar, Generic
+from typing import (
+    Any,
+    Callable,
+    Coroutine,
+    Optional,
+    Protocol,
+    Type,
+    TypeVar,
+    Union,
+    cast,
+)
 
 T = TypeVar("T")
 R = TypeVar("R")
 
 
-class Immediate(Generic[T]):
+class Result(Protocol[T]):
+    def then(self, next: Callable[[Callable[[], T]], R]) -> "Result[R]": ...
+
+    def also(self, cm: contextlib.AbstractContextManager) -> "Result[T]": ...
+
+
+class Immediate(Result[T]):
     __slots__ = "_func"
 
     def __init__(self, func: Callable[[], T]):
@@ -16,12 +32,12 @@ class Immediate(Generic[T]):
 
     def then(self, next: Callable[[Callable[[], T]], R]) -> "Immediate[R]":
         return Immediate(lambda: next(self._func))
-    
+
     @staticmethod
     def _also(func: Callable[[], T], cm: contextlib.AbstractContextManager):
         with cm:
             return func()
-        
+
     def also(self, cm: contextlib.AbstractContextManager) -> "Immediate[T]":
         return Immediate[T](lambda: Immediate._also(self._func, cm))
 
@@ -29,7 +45,7 @@ class Immediate(Generic[T]):
         return self._func()
 
 
-class Pending(Generic[T]):
+class Pending(Result[T]):
     __slots__ = "_func"
 
     def __init__(self, func: Callable[[], Coroutine[Any, Any, T]]):
@@ -53,7 +69,10 @@ class Pending(Generic[T]):
         return Pending[R](lambda: Pending._do(self._func, next))
 
     @staticmethod
-    async def _also(func: Callable[[], Coroutine[Any, Any, T]], cm: contextlib.AbstractContextManager):
+    async def _also(
+        func: Callable[[], Coroutine[Any, Any, T]],
+        cm: contextlib.AbstractContextManager,
+    ):
         with cm:
             return await func()
 
@@ -62,6 +81,14 @@ class Pending(Generic[T]):
 
     async def __call__(self) -> T:
         return await self._func()
+
+
+def make_result(func: Callable[[], Union[T, Coroutine[Any, Any, T]]]) -> Result[T]:
+    return (
+        Pending(cast(Callable[[], Coroutine[Any, Any, T]], func))
+        if inspect.iscoroutinefunction(func)
+        else Immediate(cast(Callable[[], T], func))
+    )
 
 
 def get_answer():
@@ -76,7 +103,7 @@ async def get_question():
 def print_result(func: Callable[[], str]) -> str:
     try:
         result = func()
-        print(result)
+        print(f"  {result}")
         return result
     except BaseException as exp:
         print(exp)
@@ -101,8 +128,17 @@ class PrintContextManager(contextlib.AbstractContextManager):
         return super().__exit__(exc_type, exc_value, traceback)
 
 
-s = Immediate(get_answer).then(print_result).also(PrintContextManager("sync"))
-s()
+def run_result(result: Result[T]):
+    if isinstance(result, Immediate):
+        cast(Immediate, result)()
+    else:
+        asyncio.run(cast(Pending, result)())
 
-a = Pending(get_question).then(print_result).also(PrintContextManager("async"))
-asyncio.run(a())
+
+s = make_result(get_answer).then(print_result).also(PrintContextManager("answer"))
+run_result(s)
+
+print()
+
+a = make_result(get_question).then(print_result).also(PrintContextManager("question"))
+run_result(a)
