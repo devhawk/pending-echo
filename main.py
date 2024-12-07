@@ -54,10 +54,13 @@ class Pending(Result[T]):
     def __init__(self, func: Callable[[], Coroutine[Any, Any, T]]):
         self._func = func
 
+    # Helper method in order to raise an exception in a lambda
     @staticmethod
     def _raise(ex: BaseException):
         raise ex
 
+    # helper method to invoke  _func with await, then pass the resulting value
+    # or exception in a lambda to next. This is needed since _func is async. 
     @staticmethod
     async def _do(
         func: Callable[[], Coroutine[Any, Any, T]], next: Callable[[Callable[[], T]], R]
